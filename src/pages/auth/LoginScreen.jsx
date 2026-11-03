@@ -72,6 +72,8 @@ export const LoginScreen = () => {
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
+  const isDemoStudentEmail = isLocalDemoEnabled
+    && email.trim().toLowerCase() === demoAccounts.student.email;
 
   const handleDemoLogin = async () => {
     setIsLoading(true);
@@ -91,6 +93,10 @@ export const LoginScreen = () => {
   };
 
   const handleSendOtp = async () => {
+    if (isDemoStudentEmail) {
+      await handleDemoLogin();
+      return;
+    }
     if (!isValidEmail(email)) {
       toast.error('Please use your college email address');
       return;
@@ -205,7 +211,9 @@ export const LoginScreen = () => {
                     />
                   </div>
                   <p className="text-xs text-ink-secondary mt-2">
-                    Use your college email ending with @act.edu.in
+                    {isDemoStudentEmail
+                      ? 'This is a local demo account; continue without requesting an OTP.'
+                      : 'Use your college email ending with @act.edu.in'}
                   </p>
                 </div>
 
@@ -217,7 +225,7 @@ export const LoginScreen = () => {
                   size="lg"
                   iconRight={<ArrowRight size={18} />}
                 >
-                  Send OTP
+                  {isDemoStudentEmail ? 'Continue as Demo Student' : 'Send OTP'}
                 </Button>
 
                 {/* Staff login link */}
