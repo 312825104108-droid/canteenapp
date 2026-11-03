@@ -38,7 +38,7 @@ Student sign-in uses Supabase email OTP for confirmed `@act.edu.in` addresses. T
 - ✅ **Help** — FAQs, contact support
 
 ### Staff Features
-- ✅ **Staff Login** — 4-digit PIN entry (demo: 1234)
+- ✅ **Staff Login** — server-verified 4-digit PIN, plus isolated local demo access
 - ✅ **Dashboard** — Server-synchronized orders and today's stats
 - ✅ **Order Management** — Accept, reject, mark preparing, mark ready, mark collected
 - ✅ **Menu Management** — (placeholder for adding/editing items)
@@ -82,6 +82,15 @@ npm run preview
 ```
 
 The app will run on **http://localhost:3000**
+
+### Local screen-preview accounts
+
+For local development only, set `DEMO_MODE=true` and `VITE_DEMO_MODE=true` in the ignored `.env`, ensure `STAFF_SESSION_SECRET` has a non-empty local value, then restart both the API and Vite dev server. The demo options appear on the student and staff login screens:
+
+- Student: `student.demo@act.edu.in` / `StudentDemo2026!`
+- Admin: `admin.demo@srisai.local` / `AdminDemo2026!`
+
+Demo sessions are signed, expire after one hour, and are accepted only when the backend has `NODE_ENV=development` and `DEMO_MODE=true`. Vite shows the demo login only in development mode. Demo sessions cannot read or change real orders, create profiles, or make payments. The accounts are intentionally public preview credentials and must never be treated as real authentication. Keep both demo flags `false` or unset outside local development.
 
 ## 📁 Project Structure
 

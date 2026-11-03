@@ -5,13 +5,28 @@ import { motion } from 'framer-motion';
 import Button from '../../components/ui/Button';
 import { useAuthStore } from '../../store/authStore';
 import { createStaffSession } from '../../utils/api';
+import { demoAccounts } from '../../data/demoAccounts';
+import { isLocalDemoEnabled } from '../../utils/demoMode';
 import toast from 'react-hot-toast';
 
 export const StaffLoginScreen = () => {
   const navigate = useNavigate();
-  const { staffLogin } = useAuthStore();
+  const { staffLogin, demoLogin } = useAuthStore();
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleDemoLogin = async () => {
+    setIsLoading(true);
+    try {
+      await demoLogin('admin', demoAccounts.admin.email, demoAccounts.admin.password);
+      toast.success('Local demo admin signed in. Live orders and payments are disabled.');
+      navigate('/admin/dashboard', { replace: true });
+    } catch (error) {
+      toast.error(error.message || 'Could not start the local demo session.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (pin.length !== 4) {
@@ -121,6 +136,17 @@ export const StaffLoginScreen = () => {
           >
             Login
           </Button>
+          {isLocalDemoEnabled && (
+            <div className="w-full max-w-xs mt-6 rounded-card border border-amber-300 bg-amber-50 p-4">
+              <p className="text-sm font-bold text-ink-primary">Local demo admin</p>
+              <p className="mt-1 text-xs text-ink-secondary">Email: {demoAccounts.admin.email}</p>
+              <p className="text-xs text-ink-secondary">Password: {demoAccounts.admin.password}</p>
+              <p className="mt-2 text-xs text-amber-900">This demo cannot view or modify real orders.</p>
+              <Button onClick={handleDemoLogin} loading={isLoading} fullWidth size="md" className="mt-3">
+                Continue as Demo Admin
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

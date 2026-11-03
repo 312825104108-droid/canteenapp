@@ -40,6 +40,10 @@ export const PaymentScreen = () => {
   const pickupTimeIsAvailable = pickupTimes.includes(selectedSlot?.time);
 
   const startPayment = async () => {
+    if (user?.isDemo) {
+      toast.error('Payments are disabled for local demo accounts.');
+      return;
+    }
     if (isSubmitting || !user || cartItems.length === 0 || !pickupTimeIsAvailable) {
       toast.error('Please review your cart and pickup time');
       return;

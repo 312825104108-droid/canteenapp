@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { getSupabaseClient } from '../utils/supabase';
-import { fetchStudentProfile, saveStudentProfile } from '../utils/api';
+import { createDemoSession, fetchStudentProfile, logoutDemoSession, saveStudentProfile } from '../utils/api';
+import { demoAccounts } from '../data/demoAccounts';
 
 const profileToUser = profile => ({
   ...profile,
@@ -17,6 +18,7 @@ export const useAuthStore = create(
       user: null,
       isLoggedIn: false,
       isNewUser: false,
+      isDemo: false,
       authReady: false,
       role: null,
       favoritesByUser: {},
@@ -24,7 +26,7 @@ export const useAuthStore = create(
       applyProfile: (profile, favoritesByUser = get().favoritesByUser) => {
         const user = profileToUser(profile);
         user.favorites = favoritesByUser[user.id] || [];
-        set({ user, isLoggedIn: true, isNewUser: false, role: 'student', authReady: true });
+        set({ user, isLoggedIn: true, isNewUser: false, isDemo: false, role: 'student', authReady: true });
         return user;
       },
 
@@ -33,13 +35,13 @@ export const useAuthStore = create(
           const supabase = getSupabaseClient();
           const { data: { session } } = await supabase.auth.getSession();
           if (!session) {
-            set({ user: null, isLoggedIn: false, isNewUser: false, role: null, authReady: true });
+            set({ user: null, isLoggedIn: false, isNewUser: false, isDemo: false, role: null, authReady: true });
             return;
           }
           const { data: { user }, error } = await supabase.auth.getUser(session.access_token);
           if (error || !user?.email_confirmed_at || !user.email?.toLowerCase().endsWith('@act.edu.in')) {
             await supabase.auth.signOut();
-            set({ user: null, isLoggedIn: false, isNewUser: false, role: null, authReady: true });
+            set({ user: null, isLoggedIn: false, isNewUser: false, isDemo: false, role: null, authReady: true });
             return;
           }
           const { profile } = await fetchStudentProfile();
@@ -50,13 +52,14 @@ export const useAuthStore = create(
               user: { id: user.id, studentId: user.id, email: user.email, role: 'student_setup' },
               isLoggedIn: true,
               isNewUser: true,
+              isDemo: false,
               role: 'student_setup',
               authReady: true,
             });
           }
         } catch (error) {
           console.error('Unable to restore the student authentication session:', error.name || 'Error');
-          set({ user: null, isLoggedIn: false, isNewUser: false, role: null, authReady: true });
+          set({ user: null, isLoggedIn: false, isNewUser: false, isDemo: false, role: null, authReady: true });
         }
       },
 
@@ -90,10 +93,33 @@ export const useAuthStore = create(
           },
           isLoggedIn: true,
           isNewUser: true,
+          isDemo: false,
           role: 'student_setup',
           authReady: true,
         });
         return { success: true, isNewUser: true };
+      },
+
+      demoLogin: async (role, email, password) => {
+        const result = await createDemoSession(role, email, password);
+        if (!result.authenticated) throw new Error('Local demo sign-in was not accepted.');
+        const account = role === 'student' ? demoAccounts.student : demoAccounts.admin;
+        const user = {
+          ...account.profile,
+          role: role === 'student' ? 'student' : 'staff',
+          isDemo: true,
+          walletBalance: 0,
+          favorites: get().favoritesByUser[account.profile.id] || [],
+        };
+        set({
+          user,
+          isLoggedIn: true,
+          isNewUser: false,
+          isDemo: true,
+          role: user.role,
+          authReady: true,
+        });
+        return { success: true, role: user.role };
       },
 
       staffLogin: () => {
@@ -108,6 +134,7 @@ export const useAuthStore = create(
           },
           isLoggedIn: true,
           isNewUser: false,
+          isDemo: false,
           role: 'staff',
           authReady: true,
         });
@@ -121,11 +148,13 @@ export const useAuthStore = create(
 
       logout: async () => {
         const role = get().role;
-        if (role === 'student' || role === 'student_setup') {
+        if (get().isDemo) {
+          await logoutDemoSession();
+        } else if (role === 'student' || role === 'student_setup') {
           const { error } = await getSupabaseClient().auth.signOut();
           if (error) throw error;
         }
-        set({ user: null, isLoggedIn: false, isNewUser: false, role: null, authReady: true });
+        set({ user: null, isLoggedIn: false, isNewUser: false, isDemo: false, role: null, authReady: true });
       },
 
       updateWalletBalance: amount => {

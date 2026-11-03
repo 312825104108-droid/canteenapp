@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { COLLEGE_DOMAINS } from '../../data/mockData';
+import { demoAccounts } from '../../data/demoAccounts';
+import { isLocalDemoEnabled } from '../../utils/demoMode';
 import { requestStudentOtp } from '../../utils/api';
 import { getSupabaseClient } from '../../utils/supabase';
 import Button from '../../components/ui/Button';
@@ -63,13 +65,26 @@ const OtpInput = ({ value, onChange }) => {
 
 export const LoginScreen = () => {
   const navigate = useNavigate();
-  const { login } = useAuthStore();
+  const { login, demoLogin } = useAuthStore();
 
   const [step, setStep] = useState('email'); // 'email' | 'otp'
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
+
+  const handleDemoLogin = async () => {
+    setIsLoading(true);
+    try {
+      await demoLogin('student', demoAccounts.student.email, demoAccounts.student.password);
+      toast.success('Local demo student signed in. Payments are disabled.');
+      navigate('/home', { replace: true });
+    } catch (error) {
+      toast.error(error.message || 'Could not start the local demo session.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const isValidEmail = (e) => {
     return COLLEGE_DOMAINS.some(d => e.toLowerCase().endsWith('@' + d));
@@ -215,6 +230,23 @@ export const LoginScreen = () => {
                     Staff Login
                   </button>
                 </div>
+                {isLocalDemoEnabled && (
+                  <div className="rounded-card border border-amber-300 bg-amber-50 p-4">
+                    <p className="text-sm font-bold text-ink-primary">Local demo student</p>
+                    <p className="mt-1 text-xs text-ink-secondary">Email: {demoAccounts.student.email}</p>
+                    <p className="text-xs text-ink-secondary">Password: {demoAccounts.student.password}</p>
+                    <p className="mt-2 text-xs text-amber-900">Demo access is local only. Orders and payments are disabled.</p>
+                    <Button
+                      onClick={handleDemoLogin}
+                      loading={isLoading}
+                      fullWidth
+                      size="md"
+                      className="mt-3"
+                    >
+                      Continue as Demo Student
+                    </Button>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div

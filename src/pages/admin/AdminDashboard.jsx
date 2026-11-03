@@ -210,6 +210,11 @@ export const AdminDashboard = () => {
               <h1 className="text-xl font-bold text-white">Staff Dashboard</h1>
               <p className="text-gray-400 text-sm">{user?.outletName || 'Agni Canteen'}</p>
             </div>
+            {user?.isDemo && (
+              <p className="mb-4 rounded-card bg-amber-100 px-3 py-2 text-xs font-medium text-amber-900">
+                Local demo mode — live orders and order changes are disabled.
+              </p>
+            )}
             <button
               onClick={handleLogout}
               className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center"

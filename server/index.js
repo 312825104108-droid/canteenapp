@@ -7,6 +7,15 @@ import { createClient } from '@supabase/supabase-js';
 import { mockMenuItems } from '../src/data/mockData.js';
 import { initializeDatabase, pool } from './pool.js';
 import { getVerifiedStudentIdentity, normalizeCollegeEmail } from './studentIdentity.js';
+import { demoAccounts } from '../src/data/demoAccounts.js';
+import {
+  authenticateDemoCredentials,
+  clearedDemoSessionCookie,
+  createDemoSessionToken,
+  demoSessionCookie,
+  isDemoModeEnabled,
+  readDemoSession,
+} from './demoAuth.js';
 import {
   confirmCapturedPayment,
   createPaymentOrder,
@@ -70,30 +79,44 @@ const getStudentOtpClient = () => {
 
 const authenticateStudent = async (req, res, next) => {
   const token = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!token || token.length > 8192) {
-    return res.status(401).json({ error: 'A valid student session is required' });
-  }
-  try {
-    const { data, error } = await getStudentAuthClient().auth.getUser(token);
-    const identity = error ? null : getVerifiedStudentIdentity(data?.user);
-    if (!identity) {
-      return res.status(401).json({ error: 'Student session is invalid or expired' });
+  if (token) {
+    if (token.length > 8192) {
+      return res.status(401).json({ error: 'A valid student session is required' });
     }
-    const profileResult = await pool.query(
-      'SELECT auth_user_id, email, name, department, year FROM student_profiles WHERE auth_user_id = $1',
-      [identity.id]
-    );
+    try {
+      const { data, error } = await getStudentAuthClient().auth.getUser(token);
+      const identity = error ? null : getVerifiedStudentIdentity(data?.user);
+      if (!identity) {
+        return res.status(401).json({ error: 'Student session is invalid or expired' });
+      }
+      const profileResult = await pool.query(
+        'SELECT auth_user_id, email, name, department, year FROM student_profiles WHERE auth_user_id = $1',
+        [identity.id]
+      );
+      req.student = {
+        id: identity.id,
+        email: identity.email,
+        profile: profileResult.rows[0] || null,
+      };
+      return next();
+    } catch (error) {
+      if (error.status === 503) return res.status(503).json({ error: error.message });
+      console.error('Student session validation failed:', error.name || 'Error');
+      return res.status(401).json({ error: 'Student session could not be validated' });
+    }
+  }
+
+  const demoSession = readDemoSession(req);
+  if (demoSession?.role === 'student') {
     req.student = {
-      id: identity.id,
-      email: identity.email,
-      profile: profileResult.rows[0] || null,
+      id: demoAccounts.student.profile.id,
+      email: demoAccounts.student.profile.email,
+      profile: demoAccounts.student.profile,
+      isDemo: true,
     };
     return next();
-  } catch (error) {
-    if (error.status === 503) return res.status(503).json({ error: error.message });
-    console.error('Student session validation failed:', error.name || 'Error');
-    return res.status(401).json({ error: 'Student session could not be validated' });
   }
+  return res.status(401).json({ error: 'A valid student session is required' });
 };
 
 app.disable('x-powered-by');
@@ -128,6 +151,11 @@ const signStaffSession = () => {
 };
 
 const requireStaff = (req, res, next) => {
+  const demoSession = readDemoSession(req);
+  if (demoSession?.role === 'staff') {
+    req.staffDemo = true;
+    return next();
+  }
   const token = req.get('cookie')
     ?.split(';')
     .map(cookie => cookie.trim())
@@ -214,6 +242,7 @@ app.get('/api/health', async (_req, res) => {
       studentAuthConfigured: Boolean(process.env.SUPABASE_URL
         && process.env.SUPABASE_ANON_KEY
         && process.env.SUPABASE_SERVICE_ROLE_KEY),
+      localDemoEnabled: isDemoModeEnabled(),
     });
   } catch (error) {
     console.error('Payment API database health check failed:', error.name || 'Error');
@@ -228,6 +257,7 @@ app.get('/api/health', async (_req, res) => {
       studentAuthConfigured: Boolean(process.env.SUPABASE_URL
         && process.env.SUPABASE_ANON_KEY
         && process.env.SUPABASE_SERVICE_ROLE_KEY),
+      localDemoEnabled: isDemoModeEnabled(),
     });
   }
 });
@@ -246,16 +276,37 @@ app.post('/api/staff/session', (req, res) => {
   }
   failedStaffAttempts.delete(ip);
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader(
-    'Set-Cookie',
-    `agni_staff_session=${signStaffSession()}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=28800${secure}`
-  );
+  res.setHeader('Set-Cookie', [
+    `agni_staff_session=${signStaffSession()}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=28800${secure}`,
+    clearedDemoSessionCookie(),
+  ]);
   return res.json({ authenticated: true, expiresIn: 28800 });
+});
+
+app.post('/api/demo/session', (req, res) => {
+  const account = authenticateDemoCredentials(req.body?.role, req.body?.email, req.body?.password);
+  if (!account) return res.status(isDemoModeEnabled() ? 401 : 404).json({ error: 'Local demo sign-in is unavailable or credentials are invalid' });
+  const token = createDemoSessionToken(account.role);
+  if (!token) return res.status(404).json({ error: 'Local demo sign-in is unavailable' });
+  res.setHeader('Set-Cookie', demoSessionCookie(token));
+  return res.json({
+    authenticated: true,
+    role: account.role,
+    profile: account.account.profile,
+  });
+});
+
+app.delete('/api/demo/session', (_req, res) => {
+  res.setHeader('Set-Cookie', clearedDemoSessionCookie());
+  return res.json({ loggedOut: true });
 });
 
 app.post('/api/staff/logout', (_req, res) => {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `agni_staff_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0${secure}`);
+  res.setHeader('Set-Cookie', [
+    `agni_staff_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0${secure}`,
+    clearedDemoSessionCookie(),
+  ]);
   return res.json({ loggedOut: true });
 });
 
@@ -295,7 +346,7 @@ app.post('/api/auth/otp', async (req, res) => {
 app.get('/api/student/profile', authenticateStudent, async (req, res) => {
   return res.json({ profile: req.student.profile ? {
     id: req.student.id,
-    studentId: req.student.id,
+    studentId: req.student.profile.studentId || req.student.id,
     email: req.student.email,
     name: req.student.profile.name,
     department: req.student.profile.department,
@@ -304,6 +355,7 @@ app.get('/api/student/profile', authenticateStudent, async (req, res) => {
 });
 
 app.post('/api/student/profile', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.status(403).json({ error: 'Profile changes are disabled for local demo accounts' });
   if (!req.body?.name || typeof req.body.name !== 'string'
     || req.body.name.trim().length < 2 || req.body.name.trim().length > 100
     || !profileDepartments.has(req.body.department)
@@ -334,7 +386,8 @@ app.post('/api/student/profile', authenticateStudent, async (req, res) => {
   }
 });
 
-app.get('/api/staff/orders', requireStaff, async (_req, res) => {
+app.get('/api/staff/orders', requireStaff, async (req, res) => {
+  if (req.staffDemo) return res.json({ orders: [] });
   try {
     return res.json({ orders: await getAllOrders() });
   } catch (error) {
@@ -343,6 +396,7 @@ app.get('/api/staff/orders', requireStaff, async (_req, res) => {
 });
 
 app.get('/api/student/orders', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.json({ orders: [] });
   if (!req.student.profile) return res.status(403).json({ error: 'Complete your student profile first' });
   try {
     return res.json({ orders: await getOrdersForUser(req.student.id) });
@@ -352,6 +406,7 @@ app.get('/api/student/orders', authenticateStudent, async (req, res) => {
 });
 
 app.patch('/api/staff/orders/:id/status', requireStaff, async (req, res) => {
+  if (req.staffDemo) return res.status(403).json({ error: 'Order changes are disabled for local demo accounts' });
   if (!['ACCEPTED', 'PREPARING', 'READY', 'PICKED_UP', 'CANCELLED'].includes(req.body?.status)) {
     return res.status(400).json({ error: 'Invalid order status' });
   }
@@ -366,6 +421,7 @@ app.patch('/api/staff/orders/:id/status', requireStaff, async (req, res) => {
 });
 
 app.post('/api/payments/orders', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.status(403).json({ error: 'Payments are disabled for local demo accounts' });
   if (!req.student.profile) return res.status(403).json({ error: 'Complete your student profile first' });
   try {
     const { idempotencyKey, items, pickupSlot, pickupDate, note } = req.body || {};
@@ -389,6 +445,7 @@ app.post('/api/payments/orders', authenticateStudent, async (req, res) => {
 });
 
 app.post('/api/payments/verify', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.status(403).json({ error: 'Payments are disabled for local demo accounts' });
   const { appOrderId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
   if (!verifyCheckoutSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
     return res.status(400).json({ error: 'Payment signature verification failed' });
@@ -414,6 +471,7 @@ app.post('/api/payments/verify', authenticateStudent, async (req, res) => {
 });
 
 app.post('/api/payments/failure', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.status(403).json({ error: 'Payments are disabled for local demo accounts' });
   const { appOrderId, razorpay_order_id, razorpay_payment_id } = req.body || {};
   if (!appOrderId || !razorpay_order_id || !razorpay_payment_id) {
     return res.status(400).json({ error: 'Payment failure reference is incomplete' });
@@ -435,6 +493,7 @@ app.post('/api/payments/failure', authenticateStudent, async (req, res) => {
 });
 
 app.get('/api/payments/orders/:id', authenticateStudent, async (req, res) => {
+  if (req.student.isDemo) return res.status(404).json({ error: 'Order not found' });
   try {
     const order = await getOrderForUser(req.params.id, req.student.id);
     return order ? res.json({ order }) : res.status(404).json({ error: 'Order not found' });

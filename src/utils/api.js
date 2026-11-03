@@ -1,15 +1,20 @@
 import { getSupabaseClient } from './supabase';
 
+let demoSessionActive = false;
+
 const request = async (path, options = {}) => {
   let accessToken;
-  try {
-    const { data } = await getSupabaseClient().auth.getSession();
-    accessToken = data.session?.access_token;
-  } catch {
-    accessToken = null;
+  if (!demoSessionActive) {
+    try {
+      const { data } = await getSupabaseClient().auth.getSession();
+      accessToken = data.session?.access_token;
+    } catch {
+      accessToken = null;
+    }
   }
   const response = await fetch(`/api${path}`, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -46,6 +51,23 @@ export const requestStudentOtp = email => request('/auth/otp', {
   method: 'POST',
   body: JSON.stringify({ email }),
 });
+
+export const createDemoSession = async (role, email, password) => {
+  const result = await request('/demo/session', {
+    method: 'POST',
+    body: JSON.stringify({ role, email, password }),
+  });
+  demoSessionActive = true;
+  return result;
+};
+
+export const logoutDemoSession = async () => {
+  try {
+    return await request('/demo/session', { method: 'DELETE' });
+  } finally {
+    demoSessionActive = false;
+  }
+};
 
 export const fetchStudentProfile = () => request('/student/profile');
 
